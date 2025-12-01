@@ -1,0 +1,19 @@
+<launch>
+<!-- Launch file for Livox MID360 LiDAR -->
+
+	<arg name="rviz" default="true" />
+
+	<rosparam command="load" file="$(find fast_livo)/config/mid360.yaml" />
+
+	<!-- FAST-LIVO2主节点 -->
+	<node pkg="fast_livo" type="fastlivo_mapping" name="laserMapping" output="screen">
+		<!-- Set environment variable to prioritize system libusb -->
+		<env name="LD_LIBRARY_PATH" value="/usr/lib/x86_64-linux-gnu:/opt/MVS/lib/64:/opt/MVS/lib/32:$(optenv LD_LIBRARY_PATH)" />
+		<rosparam file="$(find fast_livo)/config/camera_pinhole_mid360.yaml" />
+	</node>
+
+	<group if="$(arg rviz)">
+		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find fast_livo)/rviz_cfg/fast_livo2_map.rviz" />
+	</group>
+
+</launch>

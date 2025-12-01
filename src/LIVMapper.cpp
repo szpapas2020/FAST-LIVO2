@@ -264,11 +264,16 @@ void LIVMapper::stateEstimationAndMapping()
   switch (LidarMeasures.lio_vio_flg) 
   {
     case VIO:
+      printf("[ STATE ] Calling handleVIO()\n");
       handleVIO();
       break;
     case LIO:
     case LO:
+      printf("[ STATE ] Calling handleLIO()\n");
       handleLIO();
+      break;
+    default:
+      printf("[ STATE ] Unknown lio_vio_flg: %d\n", LidarMeasures.lio_vio_flg);
       break;
   }
 }
@@ -282,11 +287,11 @@ void LIVMapper::handleVIO()
     
   if (pcl_w_wait_pub->empty() || (pcl_w_wait_pub == nullptr)) 
   {
-    std::cout << "[ VIO ] No point!!!" << std::endl;
+    printf("[ VIO ] No point!!! pcl_w_wait_pub is empty or null\n");
     return;
   }
     
-  std::cout << "[ VIO ] Raw feature num: " << pcl_w_wait_pub->points.size() << std::endl;
+  printf("[ VIO ] Raw feature num: %zu, calling publish functions...\n", pcl_w_wait_pub->points.size());
 
   if (fabs((LidarMeasures.last_lio_update_time - _first_lidar_time) - plot_time) < (frame_cnt / 2 * 0.1)) 
   {
@@ -529,14 +534,22 @@ void LIVMapper::savePCD()
 void LIVMapper::run() 
 {
   ros::Rate rate(5000);
+  static int sync_fail_count = 0;
+  static int sync_success_count = 0;
   while (ros::ok()) 
   {
     ros::spinOnce();
     if (!sync_packages(LidarMeasures)) 
     {
+      sync_fail_count++;
+      if (sync_fail_count % 10000 == 0) {
+        printf("[ SYNC ] Waiting for data sync... (fail_count: %d, success_count: %d)\n", sync_fail_count, sync_success_count);
+      }
       rate.sleep();
       continue;
     }
+    sync_success_count++;
+    sync_fail_count = 0;
     handleFirstFrame();
 
     processImu();
@@ -867,9 +880,27 @@ void LIVMapper::img_cbk(const sensor_msgs::ImageConstPtr &msg_in)
 
 bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
 {
-  if (lid_raw_data_buffer.empty() && lidar_en) return false;
-  if (img_buffer.empty() && img_en) return false;
-  if (imu_buffer.empty() && imu_en) return false;
+  if (lid_raw_data_buffer.empty() && lidar_en) {
+    static int lidar_empty_count = 0;
+    if (++lidar_empty_count % 1000 == 0) {
+      printf("[ SYNC ] Waiting for LiDAR data... (buffer empty, count: %d)\n", lidar_empty_count);
+    }
+    return false;
+  }
+  if (img_buffer.empty() && img_en) {
+    static int img_empty_count = 0;
+    if (++img_empty_count % 1000 == 0) {
+      printf("[ SYNC ] Waiting for image data... (buffer empty, count: %d)\n", img_empty_count);
+    }
+    return false;
+  }
+  if (imu_buffer.empty() && imu_en) {
+    static int imu_empty_count = 0;
+    if (++imu_empty_count % 1000 == 0) {
+      printf("[ SYNC ] Waiting for IMU data... (buffer empty, count: %d)\n", imu_empty_count);
+    }
+    return false;
+  }
 
   switch (slam_mode_)
   {
@@ -945,20 +976,22 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
 
       double lid_newest_time = lid_header_time_buffer.back() + lid_raw_data_buffer.back()->points.back().curvature / double(1000);
       double imu_newest_time = imu_buffer.back()->header.stamp.toSec();
+      printf("[ SYNC ] LIVO mode: img_capture_time=%.6f, lid_newest_time=%.6f, imu_newest_time=%.6f, last_lio_update_time=%.6f\n",
+             img_capture_time, lid_newest_time, imu_newest_time, meas.last_lio_update_time);
 
       if (img_capture_time < meas.last_lio_update_time + 0.00001)
       {
         img_buffer.pop_front();
         img_time_buffer.pop_front();
-        ROS_ERROR("[ Data Cut ] Throw one image frame! \n");
+        printf("[ SYNC ] [ Data Cut ] Throw one image frame! img_capture_time=%.6f, last_lio_update_time=%.6f\n", 
+               img_capture_time, meas.last_lio_update_time);
         return false;
       }
 
       if (img_capture_time > lid_newest_time || img_capture_time > imu_newest_time)
       {
-        // ROS_ERROR("lost first camera frame");
-        // printf("img_capture_time, lid_newest_time, imu_newest_time: %lf , %lf
-        // , %lf \n", img_capture_time, lid_newest_time, imu_newest_time);
+        printf("[ SYNC ] Waiting for newer data: img_capture_time=%.6f, lid_newest_time=%.6f, imu_newest_time=%.6f\n",
+               img_capture_time, lid_newest_time, imu_newest_time);
         return false;
       }
 
@@ -1105,17 +1138,28 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
 void LIVMapper::publish_img_rgb(const image_transport::Publisher &pubImage, VIOManagerPtr vio_manager)
 {
   cv::Mat img_rgb = vio_manager->img_cp;
+  // 检查图像是否为空
+  if (img_rgb.empty())
+  {
+    printf("[ PUB ] Warning: img_rgb is empty, cannot publish image\n");
+    return;
+  }
   cv_bridge::CvImage out_msg;
   out_msg.header.stamp = ros::Time::now();
   // out_msg.header.frame_id = "camera_init";
   out_msg.encoding = sensor_msgs::image_encodings::BGR8;
   out_msg.image = img_rgb;
   pubImage.publish(out_msg.toImageMsg());
+  printf("[ PUB ] Image published successfully, size: %dx%d\n", img_rgb.cols, img_rgb.rows);
 }
 
 void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, VIOManagerPtr vio_manager)
 {
-  if (pcl_w_wait_pub->empty()) return;
+  if (pcl_w_wait_pub->empty()) {
+    printf("[ PUB ] Warning: pcl_w_wait_pub is empty, cannot publish point cloud\n");
+    return;
+  }
+  printf("[ PUB ] publish_frame_world called, pcl_w_wait_pub size: %zu\n", pcl_w_wait_pub->points.size());
   PointCloudXYZRGB::Ptr laserCloudWorldRGB(new PointCloudXYZRGB());
   if (img_en)
   {
@@ -1166,8 +1210,17 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
   sensor_msgs::PointCloud2 laserCloudmsg;
   if (img_en)
   {
-    // cout << "RGB pointcloud size: " << laserCloudWorldRGB->size() << endl;
-    pcl::toROSMsg(*laserCloudWorldRGB, laserCloudmsg);
+    // 只有当累积完成时才发布RGB点云，否则发布非RGB点云
+    if (laserCloudWorldRGB->size() > 0)
+    {
+      // cout << "RGB pointcloud size: " << laserCloudWorldRGB->size() << endl;
+      pcl::toROSMsg(*laserCloudWorldRGB, laserCloudmsg);
+    }
+    else
+    {
+      // 累积未完成，发布非RGB点云
+      pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg);
+    }
   }
   else 
   { 
@@ -1176,6 +1229,14 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
   laserCloudmsg.header.stamp = ros::Time::now(); //.fromSec(last_timestamp_lidar);
   laserCloudmsg.header.frame_id = "camera_init";
   pubLaserCloudFullRes.publish(laserCloudmsg);
+  // 调试输出
+  if (img_en && laserCloudWorldRGB->size() > 0) {
+    printf("[ PUB ] Published RGB point cloud, size: %zu\n", laserCloudWorldRGB->size());
+  } else if (img_en) {
+    printf("[ PUB ] Published non-RGB point cloud (accumulating), size: %zu\n", pcl_w_wait_pub->points.size());
+  } else {
+    printf("[ PUB ] Published non-RGB point cloud (no image), size: %zu\n", pcl_w_wait_pub->points.size());
+  }
 
   /**************** save map ****************/
   /* 1. make sure you have enough memories
