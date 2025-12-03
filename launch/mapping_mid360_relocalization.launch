@@ -1,0 +1,137 @@
+<launch>
+<!-- Launch file for Livox MID360 LiDAR - Relocalization Mode -->
+<!-- 重定位模式：加载预建地图并允许在 RViz 中设置初始位姿 -->
+
+	<arg name="rviz" default="true" />
+	<arg name="pcd_file" default="$(find fast_livo)/Log/PCD/all_downsampled_points.pcd" />
+	
+	<!-- Fast-Planner参数（可选） -->
+	<arg name="enable_fast_planner" default="true" />
+	<arg name="map_size_x" default="40.0" />
+	<arg name="map_size_y" default="40.0" />
+	<arg name="map_size_z" default="5.0" />
+	<arg name="max_vel" default="3.0" />
+	<arg name="max_acc" default="2.0" />
+	<arg name="flight_type" default="1" />  <!-- 1: 使用2D Nav Goal, 2: 使用全局路径点 -->
+	
+	<!-- 加载重定位配置文件 -->
+	<rosparam command="load" file="$(find fast_livo)/config/mid360_relocalization.yaml" />
+	
+	<!-- 设置 PCD 文件路径参数 -->
+	<param name="relocalization/map_path" value="$(arg pcd_file)" />
+	
+	<!-- 发布静态 TF：map -> camera_init（初始时单位变换，完全重合） -->
+	<!-- map 坐标系的原点 = PCD 文件的原点 = 建图时 camera_init 的原点 -->
+	<!-- 初始时，map 和 camera_init 完全重合（单位变换：0 0 0 0 0 0） -->
+	<!-- 当用户设置初始位姿时，initial_pose_handler 会更新 map -> camera_init 的变换 -->
+	<!-- 但地图始终固定在 map 坐标系中，不会移动 -->
+	<node pkg="tf" type="static_transform_publisher" name="map_to_camera_init_initial"
+		args="0 0 0 0 0 0 map camera_init 100" />
+
+	<!-- FAST-LIVO2主节点 -->
+	<!-- 该节点会：
+	     1. 订阅 /livox/lidar 话题接收实时激光雷达数据
+	     2. 处理点云并发布到 /cloud_registered 话题（实时点云）
+	     3. 发布位姿到 /aft_mapped_to_init 话题
+	     4. 在重定位模式下加载预建地图进行定位 -->
+	<node pkg="fast_livo" type="fastlivo_mapping" name="laserMapping" output="screen">
+		<!-- Set environment variable to prioritize system libusb -->
+		<env name="LD_LIBRARY_PATH" value="/usr/lib/x86_64-linux-gnu:/opt/MVS/lib/64:/opt/MVS/lib/32:$(optenv LD_LIBRARY_PATH)" />
+		<rosparam file="$(find fast_livo)/config/camera_pinhole_mid360.yaml" />
+	</node>
+
+	<!-- PCD 地图发布节点 -->
+	<!-- 注意：如果PCD文件很大（>500万点），会自动进行降采样以提高性能 -->
+	<node pkg="fast_livo" type="publish_pcd_map_simple.py" name="pcd_map_publisher" output="screen">
+		<param name="pcd_file" value="$(arg pcd_file)" />
+		<param name="frame_id" value="map" />  <!-- 使用标准的 map 坐标系，地图固定在 map 中 -->
+		<param name="topic" value="/pcd_map" />
+		<param name="rate" value="1.0" />
+		<param name="voxel_size" value="0.1" />  <!-- 体素降采样大小（米），0表示不降采样 -->
+		<param name="max_points" value="5000000" />  <!-- 最大点数，超过则强制降采样 -->
+	</node>
+
+	<!-- 初始位姿处理节点 -->
+	<!-- 用于处理RViz中的2D Pose Estimate，设置机器人在地图中的初始位姿 -->
+	<node pkg="fast_livo" type="initial_pose_handler.py" name="initial_pose_handler" output="screen">
+		<param name="map_frame" value="map" />  <!-- 使用标准的 map 坐标系 -->
+		<param name="base_frame" value="base_link" />  <!-- 机器人基座坐标系 -->
+		<param name="aft_mapped_frame" value="aft_mapped" />  <!-- FAST-LIVO2位姿估计坐标系（关键！） -->
+		<param name="odom_frame" value="odom" />  <!-- 里程计坐标系（用于内部处理） -->
+		<param name="initial_pose_topic" value="/initialpose" />
+		
+		<!-- 机器人物理结构参数：相机相对于 base_link 的偏移 -->
+		<param name="camera_offset_x" value="0.4" />  <!-- 相机在 base_link 前方（米） -->
+		<param name="camera_offset_y" value="0.0" />  <!-- 相机在 base_link 左右（米，中心为0） -->
+		<param name="camera_offset_z" value="0.8" />  <!-- 相机在 base_link 上方（米） -->
+		
+		<!-- base_link 距离地面的高度 -->
+		<param name="base_link_height" value="0.25" />  <!-- base_link 距离地面的高度（米） -->
+	</node>
+
+	<!-- 机器人物理结构TF变换 -->
+	<!-- base_link: 底盘中心（地面） -->
+	<!-- camera: 上方1.8m，前方0.4m -->
+	<!-- lidar: 与camera标定过 -->
+	<node pkg="fast_livo" type="publish_robot_tf.py" name="robot_tf_publisher" output="screen">
+		<param name="base_frame" value="base_link" />
+		<param name="camera_frame" value="camera" />
+		<param name="lidar_frame" value="livox" />
+		<!-- 摄像头位置（相对于base_link）：前方0.4m，上方1.8m -->
+		<param name="camera_x" value="0.4" />  <!-- 前方 -->
+		<param name="camera_y" value="0.0" />  <!-- 左右（中心） -->
+		<param name="camera_z" value="1.8" />  <!-- 上方 -->
+		<param name="camera_roll" value="0.0" />
+		<param name="camera_pitch" value="0.0" />
+		<param name="camera_yaw" value="0.0" />
+	</node>
+	
+	<!-- 注意：aft_mapped -> base_link 的 TF 由 initial_pose_handler 节点发布 -->
+	<!-- initial_pose_handler 会发布 map -> base_link 的 TF，确保 base_link 在地面上（z=0） -->
+	<!-- 因此这里不再需要 aft_mapped -> base_link 的静态 TF -->
+	<!-- 如果 initial_pose_handler 未运行，base_link 将无法正确显示 -->
+
+	<!-- odom坐标系说明 -->
+	<!-- 如果使用chassis_driver，需要确保odom坐标系与camera_init正确连接 -->
+	<!-- 方案1（推荐）：将chassis_driver的odom_frame_id设置为"camera_init" -->
+	<!--   启动命令：roslaunch chassis_driver chassis_driver.launch odom_frame_id:="camera_init" -->
+	<!-- 方案2：保持odom独立，添加静态TF连接 camera_init -> odom（需要根据实际情况调整） -->
+	<!--   如果需要，可以取消下面的注释并调整变换参数 -->
+	<!-- <node pkg="tf" type="static_transform_publisher" name="camera_init_to_odom"
+		args="0 0 0 0 0 0 camera_init odom 100" /> -->
+
+	<!-- Fast-Planner导航规划节点 -->
+	<!-- 在FAST-LIVO2重定位启动后自动启动Fast-Planner -->
+	<group if="$(arg enable_fast_planner)">
+		<!-- 启动Fast-Planner导航launch文件 -->
+		<!-- 该launch文件位于Fast-Planner包中，专门为FAST-LIVO2重定位模式设计 -->
+		<include file="$(find plan_manage)/launch/fast_livo2_navigation.launch">
+			<arg name="map_size_x" value="$(arg map_size_x)"/>
+			<arg name="map_size_y" value="$(arg map_size_y)"/>
+			<arg name="map_size_z" value="$(arg map_size_z)"/>
+			<arg name="odom_topic" value="/aft_mapped_to_init"/>  <!-- FAST-LIVO2的位姿话题 -->
+			<arg name="cloud_topic" value="/cloud_registered"/>  <!-- FAST-LIVO2的点云话题 -->
+			<arg name="frame_id" value="camera_init"/>  <!-- FAST-LIVO2使用的坐标系 -->
+			<arg name="max_vel" value="$(arg max_vel)"/>
+			<arg name="max_acc" value="$(arg max_acc)"/>
+			<arg name="flight_type" value="$(arg flight_type)"/>
+			<!-- 路径跟踪参数（可选，如需启用路径跟踪可在此传递参数） -->
+			<!-- 例如：<arg name="enable_path_tracking" value="true"/> -->
+			<!-- 参数定义在fast_livo2_navigation.launch中 -->
+		</include>
+	</group>
+
+	<!-- RViz 可视化 -->
+	<!-- RViz 配置已包含以下显示：
+	     1. /cloud_registered - 实时激光雷达点云（surround显示）
+	     2. /pcd_map - 预加载的PCD地图点云（如果添加了显示）
+	     3. /aft_mapped_to_init - 机器人位姿
+	     4. /path - 路径轨迹
+	     5. Fast-Planner规划轨迹（如果启用） -->
+	<group if="$(arg rviz)">
+		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" 
+			args="-d $(find fast_livo)/rviz_cfg/fast_livo2_map.rviz" />
+	</group>
+
+</launch>
+

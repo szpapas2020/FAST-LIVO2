@@ -5,6 +5,12 @@
 
 	<rosparam command="load" file="$(find fast_livo)/config/mid360.yaml" />
 
+	<!-- 创建 map 坐标系（建图模式下也使用 map 坐标系） -->
+	<!-- map 坐标系的原点 = PCD 文件的原点 = 建图时 camera_init 的原点 -->
+	<!-- 初始时，map 和 camera_init 完全重合（单位变换：0 0 0 0 0 0） -->
+	<node pkg="tf" type="static_transform_publisher" name="map_to_camera_init_initial"
+		args="0 0 0 0 0 0 map camera_init 100" />
+
 	<!-- FAST-LIVO2主节点 -->
 	<node pkg="fast_livo" type="fastlivo_mapping" name="laserMapping" output="screen">
 		<!-- Set environment variable to prioritize system libusb -->
@@ -12,8 +18,20 @@
 		<rosparam file="$(find fast_livo)/config/camera_pinhole_mid360.yaml" />
 	</node>
 
+	<!-- 建图模式下的 base_link 和 camera_init 初始化 -->
+	<!-- 确保 camera_init 的高度 = base_link 高度 + base_link 到摄像头的高度 -->
+	<node pkg="fast_livo" type="setup_mapping_base_link.py" name="mapping_base_link_setup" output="screen">
+		<!-- base_link 距离地面的高度 -->
+		<param name="base_link_height" value="0.25" />  <!-- base_link 距离地面的高度（米） -->
+		
+		<!-- 机器人物理结构参数：相机相对于 base_link 的偏移 -->
+		<param name="camera_offset_x" value="0.4" />  <!-- 相机在 base_link 前方（米） -->
+		<param name="camera_offset_y" value="0.0" />  <!-- 相机在 base_link 左右（米，中心为0） -->
+		<param name="camera_offset_z" value="0.8" />  <!-- 相机在 base_link 上方（米） -->
+	</node>
+
 	<group if="$(arg rviz)">
-		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find fast_livo)/rviz_cfg/fast_livo2_map.rviz" />
+		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find fast_livo)/rviz_cfg/fast_livo2.rviz" />
 	</group>
 
 </launch>
