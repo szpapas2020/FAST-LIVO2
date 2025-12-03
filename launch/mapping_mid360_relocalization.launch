@@ -21,8 +21,11 @@
 	<param name="relocalization/map_path" value="$(arg pcd_file)" />
 	
 	<!-- 发布静态 TF：map -> camera_init（初始时单位变换，完全重合） -->
-	<!-- map 坐标系的原点 = PCD 文件的原点 = 建图时 camera_init 的原点 -->
+	<!-- map 坐标系的原点 = PCD 文件的原点 = 建图时 camera_init 的原点（传感器位置） -->
 	<!-- 初始时，map 和 camera_init 完全重合（单位变换：0 0 0 0 0 0） -->
+	<!-- 在 map/camera_init 坐标系中： -->
+	<!--   - 地面在 z = -1.05m（base_link 高度 0.25m + camera_offset_z 0.8m） -->
+	<!--   - base_link 在 z = -0.8m（camera_init 下方 0.8m） -->
 	<!-- 当用户设置初始位姿时，initial_pose_handler 会更新 map -> camera_init 的变换 -->
 	<!-- 但地图始终固定在 map 坐标系中，不会移动 -->
 	<node pkg="tf" type="static_transform_publisher" name="map_to_camera_init_initial"

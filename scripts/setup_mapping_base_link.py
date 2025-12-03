@@ -74,22 +74,31 @@ class MappingBaseLinkSetup:
             # - base_link.z 应该 = base_link_height
             
             # 发布 camera_init -> base_link 的 TF
+            # 建图时：camera_init 在 (0, 0, 0)，base_link 在 camera_init 下方 0.8m
+            # camera_init -> base_link 的变换：(-camera_offset_x, -camera_offset_y, -camera_offset_z)
+            # 即：base_link 在 camera_init 后方 0.4m，下方 0.8m
             t_base_link = geometry_msgs.msg.TransformStamped()
             t_base_link.header.stamp = rospy.Time.now()
             t_base_link.header.frame_id = "camera_init"
             t_base_link.child_frame_id = "base_link"
-            t_base_link.transform.translation.x = -self.camera_offset_x  # base_link 在 camera_init 后方
-            t_base_link.transform.translation.y = -self.camera_offset_y  # base_link 在 camera_init 左右中心
-            t_base_link.transform.translation.z = -self.camera_offset_z  # base_link 在 camera_init 下方
+            t_base_link.transform.translation.x = -self.camera_offset_x  # base_link 在 camera_init 后方 0.4m
+            t_base_link.transform.translation.y = -self.camera_offset_y  # base_link 在 camera_init 左右中心（0m）
+            t_base_link.transform.translation.z = -self.camera_offset_z  # base_link 在 camera_init 下方 0.8m
             t_base_link.transform.rotation.x = 0.0
             t_base_link.transform.rotation.y = 0.0
             t_base_link.transform.rotation.z = 0.0
             t_base_link.transform.rotation.w = 1.0
             transforms.append(t_base_link)
             
-            rospy.loginfo("发布 camera_init -> base_link TF:")
-            rospy.loginfo("  偏移: (%.3f, %.3f, %.3f)", 
+            rospy.loginfo("=" * 60)
+            rospy.loginfo("建图模式：camera_init -> base_link TF")
+            rospy.loginfo("=" * 60)
+            rospy.loginfo("camera_init 位置: (0, 0, 0) - 建图时的原点")
+            rospy.loginfo("base_link 位置: (%.3f, %.3f, %.3f) - 相对于 camera_init", 
                          -self.camera_offset_x, -self.camera_offset_y, -self.camera_offset_z)
+            rospy.loginfo("base_link 在 camera_init 下方 %.3f m", self.camera_offset_z)
+            rospy.loginfo("base_link 与地面距离: %.3f m", self.base_link_height)
+            rospy.loginfo("=" * 60)
             
         except Exception as e:
             rospy.logerr("设置 TF 时出错: %s", str(e))

@@ -6,8 +6,11 @@
 	<rosparam command="load" file="$(find fast_livo)/config/mid360.yaml" />
 
 	<!-- 创建 map 坐标系（建图模式下也使用 map 坐标系） -->
-	<!-- map 坐标系的原点 = PCD 文件的原点 = 建图时 camera_init 的原点 -->
+	<!-- map 坐标系的原点 = PCD 文件的原点 = 建图时 camera_init 的原点（传感器位置） -->
 	<!-- 初始时，map 和 camera_init 完全重合（单位变换：0 0 0 0 0 0） -->
+	<!-- 在 map/camera_init 坐标系中： -->
+	<!--   - 地面在 z = -1.05m（base_link 高度 0.25m + camera_offset_z 0.8m） -->
+	<!--   - base_link 在 z = -0.8m（camera_init 下方 0.8m） -->
 	<node pkg="tf" type="static_transform_publisher" name="map_to_camera_init_initial"
 		args="0 0 0 0 0 0 map camera_init 100" />
 
